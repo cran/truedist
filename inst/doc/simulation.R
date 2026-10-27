@@ -1,0 +1,148 @@
+## ----setup, include=FALSE-----------------------------------------------------
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", dpi = 200,
+                      fig.width = 6.5, fig.height = 3.6, out.width = "100%")
+library(truedist)
+
+## ----design-------------------------------------------------------------------
+n <- 500
+reps <- as.integer(Sys.getenv("TRUEDIST_REPS", 10))
+smoothings <- c(0.05, 0.1, 0.2, 0.33, 0.5)   # values of `smoothing`; 0.1 is the default
+stats_names <- c("mean", "sd", "q10", "q50", "q90")
+
+scenarios <- list(
+  normal  = function(n) rnorm(n, 0.2, 0.2),
+  exponential = function(n) rexp(n, rate = 5),   # skewed: mean 0.2, SD 0.2
+  bimodal = function(n) ifelse(runif(n) < 0.6, rnorm(n, 0.05, 0.05),
+                               rnorm(n, 0.8, 0.15))
+)
+
+# Exact true densities
+true_density <- list(
+  normal  = function(x) dnorm(x, 0.2, 0.2),
+  bimodal = function(x) 0.6 * dnorm(x, 0.05, 0.05) + 0.4 * dnorm(x, 0.8, 0.15),
+  exponential = function(x) dexp(x, rate = 5)
+)
+
+# Exact true CDFs
+true_cdf <- list(
+  normal  = function(x) pnorm(x, 0.2, 0.2),
+  bimodal = function(x) 0.6 * pnorm(x, 0.05, 0.05) + 0.4 * pnorm(x, 0.8, 0.15),
+  exponential = function(x) pexp(x, rate = 5)
+)
+x_eval <- seq(-2.5, 3.5, length.out = 3000)
+
+# True summary statistics, from a very large sample
+set.seed(2026)
+truth <- lapply(scenarios, function(draw) {
+  th <- draw(1e5)
+  c(mean = mean(th), sd = sd(th),
+    q10 = unname(quantile(th, 0.10)), q50 = unname(quantile(th, 0.50)),
+    q90 = unname(quantile(th, 0.90)))
+})
+
+## ----estimators---------------------------------------------------------------
+summarise_reported <- function(y) {
+  c(mean = mean(y), sd = sd(y),
+    q10 = unname(quantile(y, 0.10)), q50 = unname(quantile(y, 0.50)),
+    q90 = unname(quantile(y, 0.90)))
+}
+
+# CDF of an em_smooth fit, interpolated between grid points
+em_cdf <- function(fit) {
+  function(x) approx(fit$grid, cumsum(fit$weights), xout = x,
+                     yleft = 0, yright = 1)$y
+}
+
+# Kolmogorov-Smirnov distance (largest vertical gap between two CDFs) and
+# Wasserstein-1 distance (area between them, i.e. the average horizontal gap
+# across all quantiles)
+cdf_distances <- function(F_hat, F_true) {
+  gap <- abs(F_hat(x_eval) - F_true(x_eval))
+  c(ks = max(gap), w1 = sum(gap) * (x_eval[2] - x_eval[1]))
+}
+
+# The statistics of a fit, in the order of stats_names
+stats_of <- function(fit) {
+  s <- summary(fit)
+  setNames(s$estimate, s$statistic)[stats_names]
+}
+
+one_rep <- function(draw, F_true) {
+  theta <- draw(n)
+  se <- runif(n, 0.05, 0.40)
+  y <- rnorm(n, theta, se)
+  nm <- normal_fit(y, se)
+  rows <- list(
+    reported = c(summarise_reported(y), cdf_distances(ecdf(y), F_true)),
+    normal = c(stats_of(nm),
+               cdf_distances(function(x) pnorm(x, nm$mu, nm$tau), F_true))
+  )
+  add_em <- function(label, fit) {
+    rows[[label]] <<- c(stats_of(fit), cdf_distances(em_cdf(fit), F_true))
+  }
+  for (cc in smoothings) {
+    add_em(paste0("em_smooth (smoothing = ", cc, ")"),
+           em_smooth(y, se, smoothing = cc))
+  }
+  do.call(rbind, rows)
+}
+
+## ----simulate-----------------------------------------------------------------
+set.seed(1)
+sims <- lapply(names(scenarios), function(s) {
+  lapply(seq_len(reps), function(r) {
+    # progress goes straight to the console (stderr), not into the document
+    cat(sprintf("simulation: scenario '%s', replication %d of %d\n",
+                s, r, reps), file = stderr())
+    one_rep(scenarios[[s]], true_cdf[[s]])
+  })
+})
+names(sims) <- names(scenarios)
+
+distance_table <- function(s) {
+  arr <- simplify2array(sims[[s]])[, c("ks", "w1"), , drop = FALSE]
+  apply(arr, c(1, 2), mean)
+}
+
+## ----tables, results="asis"---------------------------------------------------
+for (s in names(scenarios)) {
+  cat("\n\n### Distance to the true CDF:", s, "\n\n")
+  print(knitr::kable(round(distance_table(s), 3)))
+}
+
+## ----example-fits-------------------------------------------------------------
+cols <- c(true = "black", reported = "gray55", em = "#1f77b4")
+set.seed(7)
+layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE),
+       heights = c(5, 1))
+op <- par(mar = c(4, 4, 3, 1), cex.main = 1)
+for (s in names(scenarios)) {
+  th <- scenarios[[s]](n)
+  se <- runif(n, 0.05, 0.40)
+  y <- rnorm(n, th, se)
+  fit <- em_smooth(y, se)
+  xs <- fit$grid
+  d_true <- true_density[[s]](xs)
+  d_rep <- density(y, bw = 0.05)
+  ylim <- c(0, max(d_true, d_rep$y, fit$density))
+  # show only the range where some curve has density of at least 0.01
+  d_rep_xs <- approx(d_rep$x, d_rep$y, xs, rule = 2)$y
+  shown <- pmax(fit$density, d_true, d_rep_xs) >= 0.01
+  xlim <- range(xs[shown], 0)
+  plot(xs, fit$density, type = "n", xlim = xlim, ylim = ylim, xlab = "Effect",
+       ylab = "Density",
+       main = sprintf("%s\n(smoothing %g, SD %.3f)", s, fit$smoothing,
+                      fit$smoothing_sd))
+  lines(d_rep, col = cols["reported"], lwd = 2)
+  lines(xs, d_true, col = cols["true"], lwd = 2, lty = 2)
+  lines(xs, fit$density, col = cols["em"], lwd = 2.5)
+}
+par(mar = c(0, 0, 0, 0))
+plot.new()
+legend("center", horiz = TRUE, bty = "n", cex = 0.8, lwd = 2,
+       lty = c(1, 2, 1),
+       col = cols[c("em", "true", "reported")],
+       legend = c("em_smooth", "True distribution", "Reported estimates"))
+par(op)      # restore the usual graphics settings
+layout(1)    # restore the default single-panel layout
+

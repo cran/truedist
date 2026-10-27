@@ -1,0 +1,27 @@
+Package: truedist
+Title: Estimating the Distribution of True Effects from Noisy Estimates
+Version: 0.1.0
+Authors@R: 
+    person("Paul", "von Hippel", , "ph3828@eid.utexas.edu", role = c("aut", "cre"))
+Description: Estimates the distribution of true effects (or any latent
+    parameter) from estimates that each have a known, possibly different,
+    standard error. The main function, em_smooth(), implements the smoothed
+    EM (EMS) algorithm of Silverman, Jones, Wilson and Nychka (1990)
+    <doi:10.1111/j.2517-6161.1990.tb01788.x> for a nonparametric mixing
+    distribution on a grid. The smoothing uses one constant standard
+    deviation, set from the typical standard error and the sample size.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Language: en-US
+Depends: R (>= 3.5.0)
+Imports: graphics, stats
+Suggests: knitr, rmarkdown, testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0
+NeedsCompilation: no
+Packaged: 2026-10-17 12:54:42 UTC; ph3828
+Author: Paul von Hippel [aut, cre]
+Maintainer: Paul von Hippel <ph3828@eid.utexas.edu>
+Repository: CRAN
+Date/Publication: 2026-10-27 18:30:02 UTC
